@@ -1,0 +1,350 @@
+From 105cca96c7d427ece33c2163e43867d6a1e0720c Mon Sep 17 00:00:00 2001
+From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
+Date: Sat, 4 Jun 2022 10:34:38 +0200
+Subject: [PATCH] Memory-mapped sensor
+
+Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
+---
+ hw/arm/vexpress.c   |   5 +
+ hw/misc/meson.build |   2 +
+ hw/misc/mmsens.c    | 292 ++++++++++++++++++++++++++++++++++++++++++++
+ 3 files changed, 299 insertions(+)
+ create mode 100644 hw/misc/mmsens.c
+
+diff --git a/hw/arm/vexpress.c b/hw/arm/vexpress.c
+index 58481c0762..222fce263c 100644
+--- a/hw/arm/vexpress.c
++++ b/hw/arm/vexpress.c
+@@ -91,6 +91,7 @@ enum {
+     VE_USB,
+     VE_DAPROM,
+     VE_VIRTIO,
++    VE_MM_SENSOR,
+ };
+ 
+ static hwaddr motherboard_legacy_map[] = {
+@@ -113,6 +114,7 @@ static hwaddr motherboard_legacy_map[] = {
+     [VE_VIRTIO] = 0x10013000,
+     [VE_SERIALDVI] = 0x10016000,
+     [VE_RTC] = 0x10017000,
++    [VE_MM_SENSOR] = 0x10018000,
+     [VE_COMPACTFLASH] = 0x1001a000,
+     [VE_CLCD] = 0x1001f000,
+     /* CS0: 0x40000000 .. 0x44000000 */
+@@ -651,6 +653,9 @@ static void vexpress_common_init(MachineState *machine)
+     i2c = (I2CBus *)qdev_get_child_bus(dev, "i2c");
+     i2c_slave_create_simple(i2c, "sii9022", 0x39);
+ 
++    /* VE_MM_SENSOR */
++    sysbus_create_simple("mistra.mmsens", map[VE_MM_SENSOR], pic[29]);
++
+     sysbus_create_simple("pl031", map[VE_RTC], pic[4]); /* RTC */
+ 
+     /* VE_COMPACTFLASH: not modelled */
+diff --git a/hw/misc/meson.build b/hw/misc/meson.build
+index a53b849a5a..d470680021 100644
+--- a/hw/misc/meson.build
++++ b/hw/misc/meson.build
+@@ -124,3 +124,5 @@ specific_ss.add(when: 'CONFIG_MIPS_CPS', if_true: files('mips_cmgcr.c', 'mips_cp
+ specific_ss.add(when: 'CONFIG_MIPS_ITU', if_true: files('mips_itu.c'))
+ 
+ specific_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
++
++softmmu_ss.add(files('mmsens.c'))
+diff --git a/hw/misc/mmsens.c b/hw/misc/mmsens.c
+new file mode 100644
+index 0000000000..fd40d3d5a4
+--- /dev/null
++++ b/hw/misc/mmsens.c
+@@ -0,0 +1,288 @@
++/*
++ * Memory mapped sensor component
++ *
++ * Written by Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu/log.h"
++#include "hw/ptimer.h"
++#include "hw/sysbus.h"
++#include "hw/register.h"
++#include "hw/irq.h"
++#include "migration/vmstate.h"
++
++#ifndef MM_SENS_ERR_DEBUG
++#define MM_SENS_ERR_DEBUG 0
++#endif
++
++#define TYPE_MM_SENS "mistra.mmsens"
++
++#define MM_SENS(obj) \
++    OBJECT_CHECK(MMSensor, (obj), TYPE_MM_SENS)
++
++#define DB_PRINT(fmt, args...) do { \
++    if (MM_SENS_ERR_DEBUG) { \
++        qemu_log("%s: " fmt, __func__, ## args); \
++    } \
++} while (0)
++
++REG32(CTRL, 0x00)
++    FIELD(CTRL,     EN,     0,  1)      /* component enable */
++    FIELD(CTRL,     IEN,    1,  1)      /* interrupt enable */
++    FIELD(CTRL,     FREQ,   2,  1)      /* sampling frequency setting */
++
++REG32(STATUS, 0x04)
++    FIELD(STATUS,   IFG,    1,  1)      /* interrupt flag */
++
++REG32(DATA, 0x08)
++    FIELD(DATA,     SAMPLE, 0,  16)     /* current value */
++
++#define R_MAX   ((R_DATA) + 1)
++
++#define DATA_UPDATE_NORMAL_FREQ     (1)
++#define DATA_UPDATE_FAST_FREQ       (2)
++
++#define FREQ_NORMAL     (0)
++#define FREQ_FAST       (1)
++
++typedef struct MMSensor {
++    SysBusDevice parent_obj;
++
++    MemoryRegion iomem;
++    qemu_irq irq;
++
++    ptimer_state *timer;
++
++    uint8_t sampling_frequency;
++
++    uint32_t regs[R_MAX];
++    RegisterInfo regs_info[R_MAX];
++} MMSensor;
++
++/*
++ * IRQ generator
++ *
++ * If alarm is enabled and is set, trigger interrupt.
++ */
++static void mm_sens_update_irq(MMSensor *s)
++{
++    bool pending = s->regs[R_CTRL] & s->regs[R_STATUS] & R_CTRL_IEN_MASK;
++
++    DB_PRINT("Interrupt %s\n", pending ? "generated" : "none");
++
++    qemu_set_irq(s->irq, pending);
++}
++
++/*
++ * Update measured data
++ *
++ * Update current measurement.
++ */
++static void mm_sens_update_data(void *opaque)
++{
++    MMSensor *s = MM_SENS(opaque);
++
++    s->regs[R_DATA] = s->regs[R_DATA] + 1;
++    if ((s->regs[R_DATA] & 0x000fu) > 0x0009u) {
++        s->regs[R_DATA] += 0x0006u;
++        if ((s->regs[R_DATA] & 0x00f0u) > 0x0090u) {
++            s->regs[R_DATA] += 0x0060u;
++            if ((s->regs[R_DATA] & 0x0f00u) > 0x0900u) {
++                s->regs[R_DATA] += 0x0600u;
++                if ((s->regs[R_DATA] & 0xf000u) > 0x9000u) {
++                    s->regs[R_DATA] += 0x6000u;
++                }
++            }
++        }
++    }
++
++    s->regs[R_STATUS] |= R_STATUS_IFG_MASK;
++
++    mm_sens_update_irq(s);
++}
++
++/*
++ * Reset component registers and variables
++ */
++static void mm_sens_reset(DeviceState *dev)
++{
++    MMSensor *s = MM_SENS(dev);
++    int i;
++
++    s->sampling_frequency = FREQ_NORMAL;
++
++    for (i = 0; i < R_MAX; ++i) {
++        register_reset(&s->regs_info[i]);
++    }
++}
++
++/*
++ * CTRL register updates
++ *
++ * If component is enabled, start timer, else stop timer.
++ * If interrupt is enabled, check if interrupt needs to be generated.
++ */
++static void r_ctrl_post_write(RegisterInfo *reg, uint64_t val)
++{
++    MMSensor *s = MM_SENS(reg->opaque);
++    uint8_t new_sfreq;
++
++    DB_PRINT("Wrote %lu to CTRL\n", val);
++
++    new_sfreq = (s->regs[R_CTRL] & R_CTRL_FREQ_MASK) >> R_CTRL_FREQ_SHIFT;
++
++    ptimer_transaction_begin(s->timer);
++
++    if (new_sfreq != s->sampling_frequency) {
++        s->sampling_frequency = new_sfreq;
++        switch (s->sampling_frequency) {
++            case FREQ_NORMAL:
++                ptimer_set_freq(s->timer, DATA_UPDATE_NORMAL_FREQ);
++                break;
++            case FREQ_FAST:
++                ptimer_set_freq(s->timer, DATA_UPDATE_FAST_FREQ);
++                break;
++            default:
++                DB_PRINT("Unknown frequency %u\n", s->sampling_frequency);
++                break;
++        }
++    }
++
++    if (s->regs[R_CTRL] & R_CTRL_EN_MASK) {
++        /* start timer if not started*/
++        ptimer_run(s->timer, 0);
++
++        if (s->regs[R_CTRL] & R_CTRL_IEN_MASK) {
++            /* check if alarm should be triggered */
++            mm_sens_update_irq(s);
++        }
++    } else {
++        /* stop timer */
++        ptimer_stop(s->timer);
++    }
++
++    ptimer_transaction_commit(s->timer);
++}
++
++/*
++ * STATUS register updates
++ *
++ * Clear interrupt flag
++ */
++static void r_status_post_write(RegisterInfo *reg, uint64_t val)
++{
++    MMSensor *s = MM_SENS(reg->opaque);
++
++    DB_PRINT("Wrote %lu to STATUS\n", val);
++
++    mm_sens_update_irq(s);
++}
++
++static const RegisterAccessInfo mm_sens_regs_info[] = {
++    {   .name = "CTRL",           .addr = A_CTRL,
++        .reset = 0,
++        .rsvd = ~(R_CTRL_EN_MASK | R_CTRL_IEN_MASK | R_CTRL_FREQ_MASK),
++        .post_write = r_ctrl_post_write,
++    },
++    {   .name = "STATUS",           .addr = A_STATUS,
++        .reset = 0,
++        .rsvd = ~R_STATUS_IFG_MASK,
++        .post_write = r_status_post_write,
++    },
++    {   .name = "DATA",         .addr = A_DATA,
++        .reset = 0,
++        .rsvd = ~R_DATA_SAMPLE_MASK,
++        .ro = R_DATA_SAMPLE_MASK,
++    },
++};
++
++static const MemoryRegionOps mm_sens_reg_ops = {
++    .read = register_read_memory,
++    .write = register_write_memory,
++    .endianness = DEVICE_LITTLE_ENDIAN,
++    .valid = {
++        .min_access_size = 4,
++        .max_access_size = 4,
++    }
++};
++
++static const VMStateDescription vmstate_mm_sens = {
++    .name = "mm_sens_cmd",
++    .version_id = 1,
++    .minimum_version_id = 1,
++    .fields = (VMStateField[]) {
++        VMSTATE_UINT8(sampling_frequency, MMSensor),
++        VMSTATE_UINT32_ARRAY(regs, MMSensor, R_MAX),
++        VMSTATE_PTIMER(timer, MMSensor),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void mm_sens_init(Object *obj)
++{
++    SysBusDevice *sbd = SYS_BUS_DEVICE(obj);
++    MMSensor *s = MM_SENS(obj);
++    RegisterInfoArray *reg_array;
++
++    sysbus_init_irq(sbd, &s->irq);
++
++    memory_region_init(&s->iomem, obj, "mistra.mmsens", R_MAX * 4);
++    reg_array = register_init_block32(DEVICE(obj), mm_sens_regs_info,
++                                      ARRAY_SIZE(mm_sens_regs_info),
++                                      s->regs_info, s->regs,
++                                      &mm_sens_reg_ops,
++                                      MM_SENS_ERR_DEBUG,
++                                      R_MAX * 4);
++    memory_region_add_subregion(&s->iomem,
++                                A_CTRL,
++                                &reg_array->mem);
++
++    sysbus_init_mmio(sbd, &s->iomem);
++
++    s->timer = ptimer_init(mm_sens_update_data, s, PTIMER_POLICY_CONTINUOUS_TRIGGER);
++    ptimer_transaction_begin(s->timer);
++    ptimer_set_freq(s->timer, DATA_UPDATE_NORMAL_FREQ);
++    ptimer_transaction_commit(s->timer);
++}
++
++static void mm_sens_class_init(ObjectClass *klass, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(klass);
++
++    dc->reset = mm_sens_reset;
++    dc->vmsd = &vmstate_mm_sens;
++}
++
++static const TypeInfo mm_sens_info = {
++    .name           = TYPE_MM_SENS,
++    .parent         = TYPE_SYS_BUS_DEVICE,
++    .instance_size  = sizeof(MMSensor),
++    .instance_init  = mm_sens_init,
++    .class_init     = mm_sens_class_init,
++};
++
++static void mm_sens_register_types(void)
++{
++    type_register_static(&mm_sens_info);
++}
++
++type_init(mm_sens_register_types)
+-- 
+2.34.1
+
