@@ -1,0 +1,261 @@
+From d1a183a54aa5cb4576a83eb4bbfc682f92e1e0ce Mon Sep 17 00:00:00 2001
+From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
+Date: Sat, 15 Oct 2022 17:57:07 +0200
+Subject: [PATCH] Simple I2C temperature sensor
+
+Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
+---
+ hw/arm/vexpress.c   |   6 ++
+ hw/misc/i2csens.c   | 199 ++++++++++++++++++++++++++++++++++++++++++++
+ hw/misc/meson.build |   1 +
+ 3 files changed, 206 insertions(+)
+ create mode 100644 hw/misc/i2csens.c
+
+diff --git a/hw/arm/vexpress.c b/hw/arm/vexpress.c
+index 222fce263c..7ce960efd7 100644
+--- a/hw/arm/vexpress.c
++++ b/hw/arm/vexpress.c
+@@ -92,6 +92,7 @@ enum {
+     VE_DAPROM,
+     VE_VIRTIO,
+     VE_MM_SENSOR,
++    VE_I2C_SENSOR,
+ };
+ 
+ static hwaddr motherboard_legacy_map[] = {
+@@ -109,6 +110,7 @@ static hwaddr motherboard_legacy_map[] = {
+     [VE_UART2] = 0x1000b000,
+     [VE_UART3] = 0x1000c000,
+     [VE_WDT] = 0x1000f000,
++    [VE_I2C_SENSOR] = 0x10010000,
+     [VE_TIMER01] = 0x10011000,
+     [VE_TIMER23] = 0x10012000,
+     [VE_VIRTIO] = 0x10013000,
+@@ -658,6 +660,10 @@ static void vexpress_common_init(MachineState *machine)
+ 
+     sysbus_create_simple("pl031", map[VE_RTC], pic[4]); /* RTC */
+ 
++    dev = sysbus_create_simple(TYPE_VERSATILE_I2C, map[VE_I2C_SENSOR], NULL);
++    i2c = (I2CBus *)qdev_get_child_bus(dev, "i2c");
++    i2c_slave_create_simple(i2c, "mistra.i2csens", 0x36);
++
+     /* VE_COMPACTFLASH: not modelled */
+ 
+     sysbus_create_simple("pl111", map[VE_CLCD], pic[14]);
+diff --git a/hw/misc/i2csens.c b/hw/misc/i2csens.c
+new file mode 100644
+index 0000000000..49c69a9df6
+--- /dev/null
++++ b/hw/misc/i2csens.c
+@@ -0,0 +1,199 @@
++/*
++ * I2C temperature sensor component
++ *
++ * Written by Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
++ *
++ * Permission is hereby granted, free of charge, to any person obtaining a
++ * copy of this software and associated documentation files (the "Software"),
++ * to deal in the Software without restriction, including without limitation
++ * the rights to use, copy, modify, merge, publish, distribute, sublicense,
++ * and/or sell copies of the Software, and to permit persons to whom the
++ * Software is furnished to do so, subject to the following conditions:
++ *
++ * The above copyright notice and this permission notice shall be included in
++ * all copies or substantial portions of the Software.
++ *
++ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
++ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
++ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
++ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
++ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
++ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
++ * DEALINGS IN THE SOFTWARE.
++ */
++
++#include "qemu/osdep.h"
++#include "qemu-common.h"
++#include "qemu/log.h"
++#include "hw/i2c/i2c.h"
++#include "migration/vmstate.h"
++
++#ifndef I2C_SENS_ERR_DEBUG
++#define I2C_SENS_ERR_DEBUG 0
++#endif
++
++#define TYPE_I2C_SENS "mistra.i2csens"
++
++#define I2C_SENS(obj) \
++    OBJECT_CHECK(I2CSensor, (obj), TYPE_I2C_SENS)
++
++#define DB_PRINT(fmt, args...) do { \
++    if (I2C_SENS_ERR_DEBUG) { \
++        qemu_log("%s: " fmt, __func__, ## args); \
++    } \
++} while (0)
++
++/* registers */
++enum {
++    REG_ID_OFFSET = 0x0u,
++    REG_CTRL_OFFSET,
++    REG_TEMPERATURE_OFFSET,
++    NR_REGS
++};
++
++#define REG_CTRL_EN_SHIFT   (0x0)
++#define REG_CTRL_EN_MASK    (0x01)
++
++#define I2C_SENS_ID_VAL     (0x5A)
++
++/* A simple I2C slave which returns values of ID or CNT register. */
++typedef struct I2CSensor {
++    /*< private >*/
++    I2CSlave i2c;
++    /*< public >*/
++    uint8_t regs[NR_REGS];      // peripheral registers
++    uint8_t count;          // counter used for tx/rx
++    uint8_t ptr;            // current register index
++} I2CSensor;
++
++/* Reset all counters and load ID register */
++static void i2c_sens_reset(DeviceState *ds)
++{
++    I2CSensor *s = I2C_SENS(ds);
++
++    s->ptr = 0;
++    s->count = 0;
++    memset(s->regs, 0, NR_REGS);
++    s->regs[REG_ID_OFFSET] = I2C_SENS_ID_VAL;
++
++    /* random seed */
++    srand(time(NULL));
++}
++
++/* Generate random temperature value
++ * Value is in range 15.0 to 25.0 with 0.5 step.
++ */
++static uint8_t i2c_sens_get_temperature(void)
++{
++    return (30 + (rand() % 21));
++}
++
++/* Check for read event from master.
++ * Once read event is triggered, update value in TEMPERATURE register.
++ * If peripheral is enabled, load next value, otherwise load 0xff.
++ */
++static int i2c_sens_event(I2CSlave *i2c, enum i2c_event event)
++{
++    I2CSensor *s = I2C_SENS(i2c);
++
++    if (event == I2C_START_RECV) {
++        if (s->ptr == REG_TEMPERATURE_OFFSET) {
++            if (s->regs[REG_CTRL_OFFSET] & REG_CTRL_EN_MASK) {
++                s->regs[REG_TEMPERATURE_OFFSET] = i2c_sens_get_temperature();
++            } else {
++                s->regs[REG_TEMPERATURE_OFFSET] = 0xff;
++            }
++        }
++    }
++
++    s->count = 0;
++
++    return 0;
++}
++
++/* Called when master requests read */
++static uint8_t i2c_sens_rx(I2CSlave *i2c)
++{
++    I2CSensor *s = I2C_SENS(i2c);
++    uint8_t ret = 0xff;
++
++    if (s->ptr < NR_REGS) {
++        ret = s->regs[s->ptr++];
++    }
++
++    DB_PRINT("Reading from %d : %d\n", s->ptr, ret);
++
++    return ret;
++}
++
++/* Called when master sends write.
++ * Update ptr with byte 0, then perform write with second byte.
++ */
++static int i2c_sens_tx(I2CSlave *i2c, uint8_t data)
++{
++    I2CSensor *s = I2C_SENS(i2c);
++
++    if (s->count == 0) {
++        /* store register address */
++        s->ptr = data;
++        s->count++;
++    } else {
++	DB_PRINT("Writing to register %d : %d\n", s->ptr, data);
++        if (s->ptr == REG_CTRL_OFFSET) {
++            s->regs[s->ptr++] = data;
++        }
++    }
++
++    return 0;
++}
++
++/* Initialization */
++static void i2c_sens_init(Object *obj)
++{
++    I2CSensor *s = I2C_SENS(obj);
++
++    s->count = 0;
++    s->ptr = 0;
++    memset(s->regs, 0, NR_REGS);
++    s->regs[REG_ID_OFFSET] = I2C_SENS_ID_VAL;
++
++    return;
++}
++
++static const VMStateDescription vmstate_i2c_sens = {
++    .name = TYPE_I2C_SENS,
++    .version_id = 1,
++    .fields = (VMStateField[]) {
++        VMSTATE_UINT8_ARRAY(regs, I2CSensor, NR_REGS),
++        VMSTATE_UINT8(count, I2CSensor),
++        VMSTATE_UINT8(ptr, I2CSensor),
++        VMSTATE_END_OF_LIST()
++    }
++};
++
++static void i2c_sens_class_init(ObjectClass *oc, void *data)
++{
++    DeviceClass *dc = DEVICE_CLASS(oc);
++    I2CSlaveClass *isc = I2C_SLAVE_CLASS(oc);
++
++    dc->reset = i2c_sens_reset;
++    dc->vmsd = &vmstate_i2c_sens;
++    isc->event = i2c_sens_event;
++    isc->recv = i2c_sens_rx;
++    isc->send = i2c_sens_tx;
++}
++
++static TypeInfo i2c_sens_info = {
++    .name = TYPE_I2C_SENS,
++    .parent = TYPE_I2C_SLAVE,
++    .instance_size = sizeof(I2CSensor),
++    .instance_init = i2c_sens_init,
++    .class_init = i2c_sens_class_init
++};
++
++static void i2c_sens_register_devices(void)
++{
++    type_register_static(&i2c_sens_info);
++}
++
++type_init(i2c_sens_register_devices);
+diff --git a/hw/misc/meson.build b/hw/misc/meson.build
+index d470680021..dc2bdfa75d 100644
+--- a/hw/misc/meson.build
++++ b/hw/misc/meson.build
+@@ -126,3 +126,4 @@ specific_ss.add(when: 'CONFIG_MIPS_ITU', if_true: files('mips_itu.c'))
+ specific_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+ 
+ softmmu_ss.add(files('mmsens.c'))
++softmmu_ss.add(files('i2csens.c'))
+-- 
+2.30.2
+
