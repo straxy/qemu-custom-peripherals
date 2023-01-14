@@ -1,21 +1,23 @@
-From 105cca96c7d427ece33c2163e43867d6a1e0720c Mon Sep 17 00:00:00 2001
+From 2cc7ec3fdd828eb3e1c069d2b7697753a772fceb Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 Date: Sat, 4 Jun 2022 10:34:38 +0200
 Subject: [PATCH] Memory-mapped sensor
 
 Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 ---
- hw/arm/vexpress.c   |   5 +
- hw/misc/meson.build |   2 +
- hw/misc/mmsens.c    | 292 ++++++++++++++++++++++++++++++++++++++++++++
- 3 files changed, 299 insertions(+)
+ hw/arm/vexpress.c                   |   5 +
+ hw/misc/meson.build                 |   2 +
+ hw/misc/mmsens.c                    | 286 ++++++++++++++++++++++++++++
+ hw/misc/trace-events                |   5 +
+ tests/avocado/boot_linux_console.py |  25 +++
+ 5 files changed, 323 insertions(+)
  create mode 100644 hw/misc/mmsens.c
 
 diff --git a/hw/arm/vexpress.c b/hw/arm/vexpress.c
-index 58481c0762..222fce263c 100644
+index e1d1983ae6..99c41868f8 100644
 --- a/hw/arm/vexpress.c
 +++ b/hw/arm/vexpress.c
-@@ -91,6 +91,7 @@ enum {
+@@ -90,6 +90,7 @@ enum {
      VE_USB,
      VE_DAPROM,
      VE_VIRTIO,
@@ -23,7 +25,7 @@ index 58481c0762..222fce263c 100644
  };
  
  static hwaddr motherboard_legacy_map[] = {
-@@ -113,6 +114,7 @@ static hwaddr motherboard_legacy_map[] = {
+@@ -112,6 +113,7 @@ static hwaddr motherboard_legacy_map[] = {
      [VE_VIRTIO] = 0x10013000,
      [VE_SERIALDVI] = 0x10016000,
      [VE_RTC] = 0x10017000,
@@ -31,7 +33,7 @@ index 58481c0762..222fce263c 100644
      [VE_COMPACTFLASH] = 0x1001a000,
      [VE_CLCD] = 0x1001f000,
      /* CS0: 0x40000000 .. 0x44000000 */
-@@ -651,6 +653,9 @@ static void vexpress_common_init(MachineState *machine)
+@@ -650,6 +652,9 @@ static void vexpress_common_init(MachineState *machine)
      i2c = (I2CBus *)qdev_get_child_bus(dev, "i2c");
      i2c_slave_create_simple(i2c, "sii9022", 0x39);
  
@@ -42,25 +44,25 @@ index 58481c0762..222fce263c 100644
  
      /* VE_COMPACTFLASH: not modelled */
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index a53b849a5a..d470680021 100644
+index ed0598dc9e..cf63e89830 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -124,3 +124,5 @@ specific_ss.add(when: 'CONFIG_MIPS_CPS', if_true: files('mips_cmgcr.c', 'mips_cp
- specific_ss.add(when: 'CONFIG_MIPS_ITU', if_true: files('mips_itu.c'))
+@@ -137,3 +137,5 @@ softmmu_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
  
- specific_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+ # HPPA devices
+ softmmu_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
 +
 +softmmu_ss.add(files('mmsens.c'))
 diff --git a/hw/misc/mmsens.c b/hw/misc/mmsens.c
 new file mode 100644
-index 0000000000..fd40d3d5a4
+index 0000000000..1dea2fd17f
 --- /dev/null
 +++ b/hw/misc/mmsens.c
-@@ -0,0 +1,288 @@
+@@ -0,0 +1,286 @@
 +/*
 + * Memory mapped sensor component
 + *
-+ * Written by Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
++ * Copyright (C) Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 + *
 + * Permission is hereby granted, free of charge, to any person obtaining a
 + * copy of this software and associated documentation files (the "Software"),
@@ -88,21 +90,12 @@ index 0000000000..fd40d3d5a4
 +#include "hw/register.h"
 +#include "hw/irq.h"
 +#include "migration/vmstate.h"
-+
-+#ifndef MM_SENS_ERR_DEBUG
-+#define MM_SENS_ERR_DEBUG 0
-+#endif
++#include "trace.h"
 +
 +#define TYPE_MM_SENS "mistra.mmsens"
 +
 +#define MM_SENS(obj) \
 +    OBJECT_CHECK(MMSensor, (obj), TYPE_MM_SENS)
-+
-+#define DB_PRINT(fmt, args...) do { \
-+    if (MM_SENS_ERR_DEBUG) { \
-+        qemu_log("%s: " fmt, __func__, ## args); \
-+    } \
-+} while (0)
 +
 +REG32(CTRL, 0x00)
 +    FIELD(CTRL,     EN,     0,  1)      /* component enable */
@@ -146,7 +139,11 @@ index 0000000000..fd40d3d5a4
 +{
 +    bool pending = s->regs[R_CTRL] & s->regs[R_STATUS] & R_CTRL_IEN_MASK;
 +
-+    DB_PRINT("Interrupt %s\n", pending ? "generated" : "none");
++    if (pending) {
++        trace_mm_sens_update_irq_generated();
++    } else {
++        trace_mm_sens_update_irq_none();
++    }
 +
 +    qemu_set_irq(s->irq, pending);
 +}
@@ -182,9 +179,9 @@ index 0000000000..fd40d3d5a4
 +/*
 + * Reset component registers and variables
 + */
-+static void mm_sens_reset(DeviceState *dev)
++static void mm_sens_reset_hold(Object *obj)
 +{
-+    MMSensor *s = MM_SENS(dev);
++    MMSensor *s = MM_SENS(obj);
 +    int i;
 +
 +    s->sampling_frequency = FREQ_NORMAL;
@@ -205,7 +202,7 @@ index 0000000000..fd40d3d5a4
 +    MMSensor *s = MM_SENS(reg->opaque);
 +    uint8_t new_sfreq;
 +
-+    DB_PRINT("Wrote %lu to CTRL\n", val);
++    trace_mm_sens_r_post_write("CTRL", val);
 +
 +    new_sfreq = (s->regs[R_CTRL] & R_CTRL_FREQ_MASK) >> R_CTRL_FREQ_SHIFT;
 +
@@ -214,15 +211,16 @@ index 0000000000..fd40d3d5a4
 +    if (new_sfreq != s->sampling_frequency) {
 +        s->sampling_frequency = new_sfreq;
 +        switch (s->sampling_frequency) {
-+            case FREQ_NORMAL:
-+                ptimer_set_freq(s->timer, DATA_UPDATE_NORMAL_FREQ);
-+                break;
-+            case FREQ_FAST:
-+                ptimer_set_freq(s->timer, DATA_UPDATE_FAST_FREQ);
-+                break;
-+            default:
-+                DB_PRINT("Unknown frequency %u\n", s->sampling_frequency);
-+                break;
++        case FREQ_NORMAL:
++            ptimer_set_freq(s->timer, DATA_UPDATE_NORMAL_FREQ);
++            break;
++        case FREQ_FAST:
++            ptimer_set_freq(s->timer, DATA_UPDATE_FAST_FREQ);
++            break;
++        default:
++            qemu_log_mask(LOG_GUEST_ERROR, "[%s]%s: Unknown frequency %u\n",
++                          TYPE_MM_SENS, __func__, s->sampling_frequency);
++            break;
 +        }
 +    }
 +
@@ -251,7 +249,7 @@ index 0000000000..fd40d3d5a4
 +{
 +    MMSensor *s = MM_SENS(reg->opaque);
 +
-+    DB_PRINT("Wrote %lu to STATUS\n", val);
++    trace_mm_sens_r_post_write("STATUS", val);
 +
 +    mm_sens_update_irq(s);
 +}
@@ -304,12 +302,12 @@ index 0000000000..fd40d3d5a4
 +
 +    sysbus_init_irq(sbd, &s->irq);
 +
-+    memory_region_init(&s->iomem, obj, "mistra.mmsens", R_MAX * 4);
++    memory_region_init(&s->iomem, obj, TYPE_MM_SENS, R_MAX * 4);
 +    reg_array = register_init_block32(DEVICE(obj), mm_sens_regs_info,
 +                                      ARRAY_SIZE(mm_sens_regs_info),
 +                                      s->regs_info, s->regs,
 +                                      &mm_sens_reg_ops,
-+                                      MM_SENS_ERR_DEBUG,
++                                      0,
 +                                      R_MAX * 4);
 +    memory_region_add_subregion(&s->iomem,
 +                                A_CTRL,
@@ -317,7 +315,8 @@ index 0000000000..fd40d3d5a4
 +
 +    sysbus_init_mmio(sbd, &s->iomem);
 +
-+    s->timer = ptimer_init(mm_sens_update_data, s, PTIMER_POLICY_CONTINUOUS_TRIGGER);
++    s->timer = ptimer_init(mm_sens_update_data, s,
++                           PTIMER_POLICY_CONTINUOUS_TRIGGER);
 +    ptimer_transaction_begin(s->timer);
 +    ptimer_set_freq(s->timer, DATA_UPDATE_NORMAL_FREQ);
 +    ptimer_transaction_commit(s->timer);
@@ -326,8 +325,9 @@ index 0000000000..fd40d3d5a4
 +static void mm_sens_class_init(ObjectClass *klass, void *data)
 +{
 +    DeviceClass *dc = DEVICE_CLASS(klass);
++    ResettableClass *rc = RESETTABLE_CLASS(klass);
 +
-+    dc->reset = mm_sens_reset;
++    rc->phases.hold = mm_sens_reset_hold;
 +    dc->vmsd = &vmstate_mm_sens;
 +}
 +
@@ -345,6 +345,52 @@ index 0000000000..fd40d3d5a4
 +}
 +
 +type_init(mm_sens_register_types)
+diff --git a/hw/misc/trace-events b/hw/misc/trace-events
+index c18bc0605e..6d8493c576 100644
+--- a/hw/misc/trace-events
++++ b/hw/misc/trace-events
+@@ -274,3 +274,8 @@ virt_ctrl_instance_init(void *dev) "ctrl: %p"
+ lasi_chip_mem_valid(uint64_t addr, uint32_t val) "access to addr 0x%"PRIx64" is %d"
+ lasi_chip_read(uint64_t addr, uint32_t val) "addr 0x%"PRIx64" val 0x%08x"
+ lasi_chip_write(uint64_t addr, uint32_t val) "addr 0x%"PRIx64" val 0x%08x"
++
++# mmsens.c
++mm_sens_update_irq_generated(void) "Interrupt generated"
++mm_sens_update_irq_none(void) "Interrupt none"
++mm_sens_r_post_write(const char * reg, uint64_t val) "%s: Wrote 0x%"PRIx64
+diff --git a/tests/avocado/boot_linux_console.py b/tests/avocado/boot_linux_console.py
+index ec07c64291..6ac034a052 100644
+--- a/tests/avocado/boot_linux_console.py
++++ b/tests/avocado/boot_linux_console.py
+@@ -1205,3 +1205,28 @@ def test_xtensa_lx60(self):
+         """
+         tar_hash = '49e88d9933742f0164b60839886c9739cb7a0d34'
+         self.do_test_advcal_2018('02', tar_hash, 'santas-sleigh-ride.elf')
++
++    def test_arm_vexpress_yocto(self):
++        """
++        :avocado: tags=arch:arm
++        :avocado: tags=machine:vexpress-a9
++        :avocado: tags=mistra
++        """
++        uboot_url = ("file:///home/user/u-boot.elf")
++        uboot_hash = '7571e33fcb1df23b05d31ae1463f0bcf9250eee2'
++        uboot_path = self.fetch_asset(uboot_url, asset_hash=uboot_hash)
++
++        sdcard_url = ('file:///home/user/rootfs.wic.gz')
++        sdcard_hash = '15e73cb70094fd0d4b6d933664c9e9ff07353dae'
++        sdcard_path_gz = self.fetch_asset(sdcard_url, asset_hash=sdcard_hash)
++        sdcard_path = os.path.join(self.workdir, 'sd.img')
++        archive.gzip_uncompress(sdcard_path_gz, sdcard_path)
++        image_pow2ceil_expand(sdcard_path)
++
++        self.vm.set_console()
++        self.vm.add_args('-m', '1G',
++                         '-kernel', uboot_path,
++                         '-drive', 'file=' + sdcard_path + ',if=sd,format=raw')
++        self.vm.launch()
++        console_pattern = 'Mistra FrameBuffer 3.1'
++        self.wait_for_console_pattern(console_pattern)
 -- 
-2.34.1
+2.30.2
 

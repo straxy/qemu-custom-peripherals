@@ -1,21 +1,22 @@
-From d1a183a54aa5cb4576a83eb4bbfc682f92e1e0ce Mon Sep 17 00:00:00 2001
+From 92c3066a4e702bf8764e2660f641f68b6c05d297 Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 Date: Sat, 15 Oct 2022 17:57:07 +0200
 Subject: [PATCH] Simple I2C temperature sensor
 
 Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 ---
- hw/arm/vexpress.c   |   6 ++
- hw/misc/i2csens.c   | 199 ++++++++++++++++++++++++++++++++++++++++++++
- hw/misc/meson.build |   1 +
- 3 files changed, 206 insertions(+)
+ hw/arm/vexpress.c    |   6 ++
+ hw/misc/i2csens.c    | 176 +++++++++++++++++++++++++++++++++++++++++++
+ hw/misc/meson.build  |   1 +
+ hw/misc/trace-events |   4 +
+ 4 files changed, 187 insertions(+)
  create mode 100644 hw/misc/i2csens.c
 
 diff --git a/hw/arm/vexpress.c b/hw/arm/vexpress.c
-index 222fce263c..7ce960efd7 100644
+index 99c41868f8..92900b37b7 100644
 --- a/hw/arm/vexpress.c
 +++ b/hw/arm/vexpress.c
-@@ -92,6 +92,7 @@ enum {
+@@ -91,6 +91,7 @@ enum {
      VE_DAPROM,
      VE_VIRTIO,
      VE_MM_SENSOR,
@@ -23,7 +24,7 @@ index 222fce263c..7ce960efd7 100644
  };
  
  static hwaddr motherboard_legacy_map[] = {
-@@ -109,6 +110,7 @@ static hwaddr motherboard_legacy_map[] = {
+@@ -108,6 +109,7 @@ static hwaddr motherboard_legacy_map[] = {
      [VE_UART2] = 0x1000b000,
      [VE_UART3] = 0x1000c000,
      [VE_WDT] = 0x1000f000,
@@ -31,7 +32,7 @@ index 222fce263c..7ce960efd7 100644
      [VE_TIMER01] = 0x10011000,
      [VE_TIMER23] = 0x10012000,
      [VE_VIRTIO] = 0x10013000,
-@@ -658,6 +660,10 @@ static void vexpress_common_init(MachineState *machine)
+@@ -657,6 +659,10 @@ static void vexpress_common_init(MachineState *machine)
  
      sysbus_create_simple("pl031", map[VE_RTC], pic[4]); /* RTC */
  
@@ -44,14 +45,14 @@ index 222fce263c..7ce960efd7 100644
      sysbus_create_simple("pl111", map[VE_CLCD], pic[14]);
 diff --git a/hw/misc/i2csens.c b/hw/misc/i2csens.c
 new file mode 100644
-index 0000000000..49c69a9df6
+index 0000000000..9a89969c56
 --- /dev/null
 +++ b/hw/misc/i2csens.c
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,176 @@
 +/*
 + * I2C temperature sensor component
 + *
-+ * Written by Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
++ * Copyright (C) Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 + *
 + * Permission is hereby granted, free of charge, to any person obtaining a
 + * copy of this software and associated documentation files (the "Software"),
@@ -73,25 +74,15 @@ index 0000000000..49c69a9df6
 + */
 +
 +#include "qemu/osdep.h"
-+#include "qemu-common.h"
 +#include "qemu/log.h"
 +#include "hw/i2c/i2c.h"
 +#include "migration/vmstate.h"
-+
-+#ifndef I2C_SENS_ERR_DEBUG
-+#define I2C_SENS_ERR_DEBUG 0
-+#endif
++#include "trace.h"
 +
 +#define TYPE_I2C_SENS "mistra.i2csens"
 +
 +#define I2C_SENS(obj) \
 +    OBJECT_CHECK(I2CSensor, (obj), TYPE_I2C_SENS)
-+
-+#define DB_PRINT(fmt, args...) do { \
-+    if (I2C_SENS_ERR_DEBUG) { \
-+        qemu_log("%s: " fmt, __func__, ## args); \
-+    } \
-+} while (0)
 +
 +/* registers */
 +enum {
@@ -117,9 +108,9 @@ index 0000000000..49c69a9df6
 +} I2CSensor;
 +
 +/* Reset all counters and load ID register */
-+static void i2c_sens_reset(DeviceState *ds)
++static void i2c_sens_reset_hold(Object *obj)
 +{
-+    I2CSensor *s = I2C_SENS(ds);
++    I2CSensor *s = I2C_SENS(obj);
 +
 +    s->ptr = 0;
 +    s->count = 0;
@@ -171,7 +162,7 @@ index 0000000000..49c69a9df6
 +        ret = s->regs[s->ptr++];
 +    }
 +
-+    DB_PRINT("Reading from %d : %d\n", s->ptr, ret);
++    trace_i2c_sens_rx(s->ptr, ret);
 +
 +    return ret;
 +}
@@ -188,26 +179,13 @@ index 0000000000..49c69a9df6
 +        s->ptr = data;
 +        s->count++;
 +    } else {
-+	DB_PRINT("Writing to register %d : %d\n", s->ptr, data);
++        trace_i2c_sens_tx(s->ptr, data);
 +        if (s->ptr == REG_CTRL_OFFSET) {
 +            s->regs[s->ptr++] = data;
 +        }
 +    }
 +
 +    return 0;
-+}
-+
-+/* Initialization */
-+static void i2c_sens_init(Object *obj)
-+{
-+    I2CSensor *s = I2C_SENS(obj);
-+
-+    s->count = 0;
-+    s->ptr = 0;
-+    memset(s->regs, 0, NR_REGS);
-+    s->regs[REG_ID_OFFSET] = I2C_SENS_ID_VAL;
-+
-+    return;
 +}
 +
 +static const VMStateDescription vmstate_i2c_sens = {
@@ -225,8 +203,9 @@ index 0000000000..49c69a9df6
 +{
 +    DeviceClass *dc = DEVICE_CLASS(oc);
 +    I2CSlaveClass *isc = I2C_SLAVE_CLASS(oc);
++    ResettableClass *rc = RESETTABLE_CLASS(oc);
 +
-+    dc->reset = i2c_sens_reset;
++    rc->phases.hold = i2c_sens_reset_hold;
 +    dc->vmsd = &vmstate_i2c_sens;
 +    isc->event = i2c_sens_event;
 +    isc->recv = i2c_sens_rx;
@@ -237,7 +216,6 @@ index 0000000000..49c69a9df6
 +    .name = TYPE_I2C_SENS,
 +    .parent = TYPE_I2C_SLAVE,
 +    .instance_size = sizeof(I2CSensor),
-+    .instance_init = i2c_sens_init,
 +    .class_init = i2c_sens_class_init
 +};
 +
@@ -248,14 +226,26 @@ index 0000000000..49c69a9df6
 +
 +type_init(i2c_sens_register_devices);
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index d470680021..dc2bdfa75d 100644
+index cf63e89830..1c7a16df27 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -126,3 +126,4 @@ specific_ss.add(when: 'CONFIG_MIPS_ITU', if_true: files('mips_itu.c'))
- specific_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+@@ -139,3 +139,4 @@ softmmu_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+ softmmu_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
  
  softmmu_ss.add(files('mmsens.c'))
 +softmmu_ss.add(files('i2csens.c'))
+diff --git a/hw/misc/trace-events b/hw/misc/trace-events
+index 6d8493c576..4c6d758842 100644
+--- a/hw/misc/trace-events
++++ b/hw/misc/trace-events
+@@ -279,3 +279,7 @@ lasi_chip_write(uint64_t addr, uint32_t val) "addr 0x%"PRIx64" val 0x%08x"
+ mm_sens_update_irq_generated(void) "Interrupt generated"
+ mm_sens_update_irq_none(void) "Interrupt none"
+ mm_sens_r_post_write(const char * reg, uint64_t val) "%s: Wrote 0x%"PRIx64
++
++# i2csens.c
++i2c_sens_rx(uint8_t reg, uint8_t val) "Reading from register 0x%02x : 0x%02x"
++i2c_sens_tx(uint8_t reg, uint8_t val) "Writing to register 0x%02x : 0x%02x"
 -- 
 2.30.2
 
