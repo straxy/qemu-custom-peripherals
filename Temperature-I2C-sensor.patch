@@ -36,7 +36,7 @@ index 99c41868f8..92900b37b7 100644
  
      sysbus_create_simple("pl031", map[VE_RTC], pic[4]); /* RTC */
  
-+    dev = sysbus_create_simple(TYPE_VERSATILE_I2C, map[VE_I2C_SENSOR], NULL);
++    dev = sysbus_create_simple(TYPE_ARM_SBCON_I2C, map[VE_I2C_SENSOR], NULL);
 +    i2c = (I2CBus *)qdev_get_child_bus(dev, "i2c");
 +    i2c_slave_create_simple(i2c, "mistra.i2csens", 0x36);
 +
