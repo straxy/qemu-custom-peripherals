@@ -1,4 +1,4 @@
-From 812a748cc775112092bfdef8bdcfcdb5b0e6c13b Mon Sep 17 00:00:00 2001
+From 52863376d7e896d466eb880875c5d6a0b6fb71ea Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 Date: Sat, 11 May 2024 21:16:15 +0200
 Subject: [PATCH] MMSensor: Add memory-mapped sensor component
@@ -7,11 +7,11 @@ Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 ---
  hw/arm/allwinner-a10.c         |   8 +
  hw/misc/meson.build            |   2 +
- hw/misc/mmsens.c               | 313 +++++++++++++++++++++++++++++++++
+ hw/misc/mmsens.c               | 324 +++++++++++++++++++++++++++++++++
  hw/misc/trace-events           |   7 +
  include/hw/arm/allwinner-a10.h |   2 +
  include/hw/misc/mmsens.h       |  77 ++++++++
- 6 files changed, 409 insertions(+)
+ 6 files changed, 420 insertions(+)
  create mode 100644 hw/misc/mmsens.c
  create mode 100644 include/hw/misc/mmsens.h
 
@@ -60,10 +60,10 @@ index 86596a3888..9bdd04028d 100644
 +system_ss.add(files('mmsens.c'))
 diff --git a/hw/misc/mmsens.c b/hw/misc/mmsens.c
 new file mode 100644
-index 0000000000..bff6541c7e
+index 0000000000..b185a57cde
 --- /dev/null
 +++ b/hw/misc/mmsens.c
-@@ -0,0 +1,313 @@
+@@ -0,0 +1,324 @@
 +/*
 + * Memory mapped sensor component
 + *
@@ -186,7 +186,6 @@ index 0000000000..bff6541c7e
 +{
 +    uint8_t new_sfreq = (val & R_CTRL_FREQ_MASK) >> R_CTRL_FREQ_SHIFT;
 +
-+    trace_mm_sens_ctrl_post_write(val);
 +
 +    ptimer_transaction_begin(s->timer);
 +
@@ -216,11 +215,6 @@ index 0000000000..bff6541c7e
 +            } else {
 +                s->regs[R_DATA] = s->regs[R_INITVAL];
 +            }
-+        }
-+
-+        if (val & R_CTRL_IEN_MASK) {
-+            /* check if alarm should be triggered */
-+            mm_sens_update_irq(s);
 +        }
 +    } else {
 +        /* stop timer */
@@ -283,13 +277,12 @@ index 0000000000..bff6541c7e
 +    MMSensorState *s = MM_SENS(opaque);
 +    const uint32_t idx = REG_INDEX(offset);
 +
++    /* Pre-write handlers */
 +    switch (offset) {
 +    case A_CTRL:
 +        r_ctrl_pre_write(s, val);
 +        break;
 +    case A_STATUS:
-+        trace_mm_sens_status_post_write(val);
-+        mm_sens_update_irq(s);
 +        /* STATUS.INITW should not be affected by written value */
 +        val = val & (~R_STATUS_INITW_MASK);
 +        val |= s->regs[R_STATUS] & R_STATUS_INITW_MASK;
@@ -311,6 +304,24 @@ index 0000000000..bff6541c7e
 +    }
 +
 +    s->regs[idx] = (uint32_t)val;
++
++    /* Post-write handlers */
++    switch (offset) {
++        case A_CTRL:
++            trace_mm_sens_ctrl_post_write(val);
++            if (s->regs[A_CTRL] & (R_CTRL_EN_MASK | R_CTRL_IEN_MASK)) {
++                mm_sens_update_irq(s);
++            }
++            break;
++        case A_STATUS:
++            trace_mm_sens_status_post_write(val);
++            mm_sens_update_irq(s);
++            break;
++        case A_INITVAL:
++        default:
++            break;
++
++    }
 +}
 +
 +static const MemoryRegionOps mm_sens_ops = {
