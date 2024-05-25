@@ -1,53 +1,35 @@
-From d1a183a54aa5cb4576a83eb4bbfc682f92e1e0ce Mon Sep 17 00:00:00 2001
+From 59447a263929135f8a86c204bcc3ec7f1575a1b2 Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
-Date: Sat, 15 Oct 2022 17:57:07 +0200
-Subject: [PATCH] Simple I2C temperature sensor
+Date: Fri, 24 May 2024 23:49:00 +0200
+Subject: [PATCH] Temperature I2C sensor
 
 Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 ---
- hw/arm/vexpress.c   |   6 ++
- hw/misc/i2csens.c   | 199 ++++++++++++++++++++++++++++++++++++++++++++
- hw/misc/meson.build |   1 +
- 3 files changed, 206 insertions(+)
+ hw/arm/cubieboard.c  |   1 +
+ hw/misc/i2csens.c    | 191 +++++++++++++++++++++++++++++++++++++++++++
+ hw/misc/meson.build  |   2 +
+ hw/misc/trace-events |   4 +
+ 4 files changed, 198 insertions(+)
  create mode 100644 hw/misc/i2csens.c
 
-diff --git a/hw/arm/vexpress.c b/hw/arm/vexpress.c
-index 222fce263c..7ce960efd7 100644
---- a/hw/arm/vexpress.c
-+++ b/hw/arm/vexpress.c
-@@ -92,6 +92,7 @@ enum {
-     VE_DAPROM,
-     VE_VIRTIO,
-     VE_MM_SENSOR,
-+    VE_I2C_SENSOR,
- };
- 
- static hwaddr motherboard_legacy_map[] = {
-@@ -109,6 +110,7 @@ static hwaddr motherboard_legacy_map[] = {
-     [VE_UART2] = 0x1000b000,
-     [VE_UART3] = 0x1000c000,
-     [VE_WDT] = 0x1000f000,
-+    [VE_I2C_SENSOR] = 0x10010000,
-     [VE_TIMER01] = 0x10011000,
-     [VE_TIMER23] = 0x10012000,
-     [VE_VIRTIO] = 0x10013000,
-@@ -658,6 +660,10 @@ static void vexpress_common_init(MachineState *machine)
- 
-     sysbus_create_simple("pl031", map[VE_RTC], pic[4]); /* RTC */
- 
-+    dev = sysbus_create_simple(TYPE_VERSATILE_I2C, map[VE_I2C_SENSOR], NULL);
-+    i2c = (I2CBus *)qdev_get_child_bus(dev, "i2c");
+diff --git a/hw/arm/cubieboard.c b/hw/arm/cubieboard.c
+index b976727eef..bda423d117 100644
+--- a/hw/arm/cubieboard.c
++++ b/hw/arm/cubieboard.c
+@@ -81,6 +81,7 @@ static void cubieboard_init(MachineState *machine)
+     /* Connect AXP 209 */
+     i2c = I2C_BUS(qdev_get_child_bus(DEVICE(&a10->i2c0), "i2c"));
+     i2c_slave_create_simple(i2c, "axp209_pmu", 0x34);
 +    i2c_slave_create_simple(i2c, "mistra.i2csens", 0x36);
-+
-     /* VE_COMPACTFLASH: not modelled */
  
-     sysbus_create_simple("pl111", map[VE_CLCD], pic[14]);
+     /* Retrieve SD bus */
+     di = drive_get(IF_SD, 0, 0);
 diff --git a/hw/misc/i2csens.c b/hw/misc/i2csens.c
 new file mode 100644
-index 0000000000..49c69a9df6
+index 0000000000..6e7b213dd5
 --- /dev/null
 +++ b/hw/misc/i2csens.c
-@@ -0,0 +1,199 @@
+@@ -0,0 +1,191 @@
 +/*
 + * I2C temperature sensor component
 + *
@@ -73,25 +55,16 @@ index 0000000000..49c69a9df6
 + */
 +
 +#include "qemu/osdep.h"
-+#include "qemu-common.h"
-+#include "qemu/log.h"
++#include "hw/resettable.h"
 +#include "hw/i2c/i2c.h"
++#include "qom/object.h"
 +#include "migration/vmstate.h"
-+
-+#ifndef I2C_SENS_ERR_DEBUG
-+#define I2C_SENS_ERR_DEBUG 0
-+#endif
++#include "trace/trace-hw_misc.h"
 +
 +#define TYPE_I2C_SENS "mistra.i2csens"
 +
 +#define I2C_SENS(obj) \
 +    OBJECT_CHECK(I2CSensor, (obj), TYPE_I2C_SENS)
-+
-+#define DB_PRINT(fmt, args...) do { \
-+    if (I2C_SENS_ERR_DEBUG) { \
-+        qemu_log("%s: " fmt, __func__, ## args); \
-+    } \
-+} while (0)
 +
 +/* registers */
 +enum {
@@ -117,9 +90,9 @@ index 0000000000..49c69a9df6
 +} I2CSensor;
 +
 +/* Reset all counters and load ID register */
-+static void i2c_sens_reset(DeviceState *ds)
++static void i2c_sens_reset_enter(Object *obj, ResetType type)
 +{
-+    I2CSensor *s = I2C_SENS(ds);
++    I2CSensor *s = I2C_SENS(obj);
 +
 +    s->ptr = 0;
 +    s->count = 0;
@@ -171,7 +144,7 @@ index 0000000000..49c69a9df6
 +        ret = s->regs[s->ptr++];
 +    }
 +
-+    DB_PRINT("Reading from %d : %d\n", s->ptr, ret);
++    trace_i2csens_read(s->ptr, ret);
 +
 +    return ret;
 +}
@@ -188,7 +161,7 @@ index 0000000000..49c69a9df6
 +        s->ptr = data;
 +        s->count++;
 +    } else {
-+	DB_PRINT("Writing to register %d : %d\n", s->ptr, data);
++	trace_i2csens_write(s->ptr, data);
 +        if (s->ptr == REG_CTRL_OFFSET) {
 +            s->regs[s->ptr++] = data;
 +        }
@@ -225,8 +198,9 @@ index 0000000000..49c69a9df6
 +{
 +    DeviceClass *dc = DEVICE_CLASS(oc);
 +    I2CSlaveClass *isc = I2C_SLAVE_CLASS(oc);
++    ResettableClass *rc = RESETTABLE_CLASS(oc);
 +
-+    dc->reset = i2c_sens_reset;
++    rc->phases.enter = i2c_sens_reset_enter;
 +    dc->vmsd = &vmstate_i2c_sens;
 +    isc->event = i2c_sens_event;
 +    isc->recv = i2c_sens_rx;
@@ -248,14 +222,27 @@ index 0000000000..49c69a9df6
 +
 +type_init(i2c_sens_register_devices);
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index d470680021..dc2bdfa75d 100644
+index 86596a3888..ce6fe88ac9 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -126,3 +126,4 @@ specific_ss.add(when: 'CONFIG_MIPS_ITU', if_true: files('mips_itu.c'))
- specific_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+@@ -156,3 +156,5 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
  
- softmmu_ss.add(files('mmsens.c'))
-+softmmu_ss.add(files('i2csens.c'))
+ # HPPA devices
+ system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
++
++system_ss.add(files('i2csens.c'))
+diff --git a/hw/misc/trace-events b/hw/misc/trace-events
+index 5d241cb40a..62b572060c 100644
+--- a/hw/misc/trace-events
++++ b/hw/misc/trace-events
+@@ -351,3 +351,7 @@ djmemc_write(int reg, uint64_t value, unsigned int size) "reg=0x%x value=0x%"PRI
+ # iosb.c
+ iosb_read(int reg, uint64_t value, unsigned int size) "reg=0x%x value=0x%"PRIx64" size=%u"
+ iosb_write(int reg, uint64_t value, unsigned int size) "reg=0x%x value=0x%"PRIx64" size=%u"
++
++# i2csens.c
++i2csens_read(int reg_id, int val) "Reading from %d: %d"
++i2csens_write(int reg_id, int val) "Writing to %d: %d"
 -- 
-2.30.2
+2.34.1
 
