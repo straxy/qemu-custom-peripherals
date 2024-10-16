@@ -1,15 +1,15 @@
-From 59447a263929135f8a86c204bcc3ec7f1575a1b2 Mon Sep 17 00:00:00 2001
+From eb0e8cd4138700c9530e54f13c218677828e6fb0 Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 Date: Fri, 24 May 2024 23:49:00 +0200
-Subject: [PATCH] Temperature I2C sensor
+Subject: [PATCH 2/5] Temperature I2C sensor
 
 Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 ---
  hw/arm/cubieboard.c  |   1 +
  hw/misc/i2csens.c    | 191 +++++++++++++++++++++++++++++++++++++++++++
- hw/misc/meson.build  |   2 +
+ hw/misc/meson.build  |   1 +
  hw/misc/trace-events |   4 +
- 4 files changed, 198 insertions(+)
+ 4 files changed, 197 insertions(+)
  create mode 100644 hw/misc/i2csens.c
 
 diff --git a/hw/arm/cubieboard.c b/hw/arm/cubieboard.c
@@ -222,27 +222,26 @@ index 0000000000..6e7b213dd5
 +
 +type_init(i2c_sens_register_devices);
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index 86596a3888..ce6fe88ac9 100644
+index 81d462d895..bb82575684 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -156,3 +156,5 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
- 
- # HPPA devices
+@@ -159,3 +159,4 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
  system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
-+
+ 
+ system_ss.add(files('mmsens.c'))
 +system_ss.add(files('i2csens.c'))
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index 5d241cb40a..62b572060c 100644
+index 1a7fa02e51..cdd33bbbb9 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -351,3 +351,7 @@ djmemc_write(int reg, uint64_t value, unsigned int size) "reg=0x%x value=0x%"PRI
- # iosb.c
- iosb_read(int reg, uint64_t value, unsigned int size) "reg=0x%x value=0x%"PRIx64" size=%u"
- iosb_write(int reg, uint64_t value, unsigned int size) "reg=0x%x value=0x%"PRIx64" size=%u"
+@@ -368,3 +368,7 @@ mm_sens_unknown_frequency(uint8_t freq) "Unknown frequency %u"
+ mm_sens_ctrl_post_write(uint64_t value) "Wrote 0x%"PRIx64" to CTRL"
+ mm_sens_status_post_write(uint64_t value) "Wrote 0x%"PRIx64" to STATUS"
+ mm_sens_initval(uint64_t value, uint8_t valid) "Wrote 0x%"PRIx64" to INITVAL, warning=%u"
 +
 +# i2csens.c
 +i2csens_read(int reg_id, int val) "Reading from %d: %d"
 +i2csens_write(int reg_id, int val) "Writing to %d: %d"
 -- 
-2.34.1
+2.39.5
 

@@ -1,17 +1,17 @@
-From 52863376d7e896d466eb880875c5d6a0b6fb71ea Mon Sep 17 00:00:00 2001
+From 9f9f4bd9372004528d8f758a271444042814d0f4 Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 Date: Sat, 11 May 2024 21:16:15 +0200
-Subject: [PATCH] MMSensor: Add memory-mapped sensor component
+Subject: [PATCH 1/5] MMSensor: Add memory-mapped sensor component
 
 Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 ---
  hw/arm/allwinner-a10.c         |   8 +
  hw/misc/meson.build            |   2 +
  hw/misc/mmsens.c               | 324 +++++++++++++++++++++++++++++++++
- hw/misc/trace-events           |   7 +
+ hw/misc/trace-events           |   6 +
  include/hw/arm/allwinner-a10.h |   2 +
  include/hw/misc/mmsens.h       |  77 ++++++++
- 6 files changed, 420 insertions(+)
+ 6 files changed, 419 insertions(+)
  create mode 100644 hw/misc/mmsens.c
  create mode 100644 include/hw/misc/mmsens.h
 
@@ -49,10 +49,10 @@ index 57d5d80159..9818a6e92e 100644
  
  static void aw_a10_class_init(ObjectClass *oc, void *data)
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index 86596a3888..9bdd04028d 100644
+index 2ca8717be2..81d462d895 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -156,3 +156,5 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
+@@ -157,3 +157,5 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
  
  # HPPA devices
  system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
@@ -389,14 +389,13 @@ index 0000000000..b185a57cde
 +
 +type_init(mm_sens_register_types)
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index 5d241cb40a..a1e37bdd31 100644
+index 1be0717c0c..1a7fa02e51 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -351,3 +351,10 @@ djmemc_write(int reg, uint64_t value, unsigned int size) "reg=0x%x value=0x%"PRI
- # iosb.c
- iosb_read(int reg, uint64_t value, unsigned int size) "reg=0x%x value=0x%"PRIx64" size=%u"
- iosb_write(int reg, uint64_t value, unsigned int size) "reg=0x%x value=0x%"PRIx64" size=%u"
-+
+@@ -362,3 +362,9 @@ aspeed_sli_read(uint64_t offset, unsigned int size, uint32_t data) "To 0x%" PRIx
+ aspeed_sliio_write(uint64_t offset, unsigned int size, uint32_t data) "To 0x%" PRIx64 " of size %u: 0x%" PRIx32
+ aspeed_sliio_read(uint64_t offset, unsigned int size, uint32_t data) "To 0x%" PRIx64 " of size %u: 0x%" PRIx32
+ 
 +# mmsens.c
 +mm_sens_update_irq(uint8_t pending) "Interrupt pending %u"
 +mm_sens_unknown_frequency(uint8_t freq) "Unknown frequency %u"
@@ -425,7 +424,7 @@ index 67a9a17b86..a0cd001362 100644
      OHCISysBusState ohci[AW_A10_NUM_USB];
 diff --git a/include/hw/misc/mmsens.h b/include/hw/misc/mmsens.h
 new file mode 100644
-index 0000000000..fec766cfd3
+index 0000000000..610ea76ff3
 --- /dev/null
 +++ b/include/hw/misc/mmsens.h
 @@ -0,0 +1,77 @@
@@ -454,7 +453,7 @@ index 0000000000..fec766cfd3
 + */
 +
 +#ifndef HW_MISC_MM_SENS_H
-+#define HW_MISC_MN_SENS_H
++#define HW_MISC_MM_SENS_H
 +
 +#include "qom/object.h"
 +#include "hw/sysbus.h"
@@ -507,5 +506,5 @@ index 0000000000..fec766cfd3
 +
 +#endif /* HW_MISC_MM_SENS_H */
 -- 
-2.34.1
+2.39.5
 
