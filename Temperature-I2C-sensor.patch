@@ -1,7 +1,7 @@
-From eb0e8cd4138700c9530e54f13c218677828e6fb0 Mon Sep 17 00:00:00 2001
+From cd94cea9d233145ce46ffe1eeedc4227eeb0ea1e Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 Date: Fri, 24 May 2024 23:49:00 +0200
-Subject: [PATCH 2/5] Temperature I2C sensor
+Subject: [PATCH 2/3] Temperature I2C sensor
 
 Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 ---
@@ -13,7 +13,7 @@ Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
  create mode 100644 hw/misc/i2csens.c
 
 diff --git a/hw/arm/cubieboard.c b/hw/arm/cubieboard.c
-index b976727eef..bda423d117 100644
+index d665d4edd9..a3840ab983 100644
 --- a/hw/arm/cubieboard.c
 +++ b/hw/arm/cubieboard.c
 @@ -81,6 +81,7 @@ static void cubieboard_init(MachineState *machine)
@@ -222,7 +222,7 @@ index 0000000000..6e7b213dd5
 +
 +type_init(i2c_sens_register_devices);
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index 81d462d895..bb82575684 100644
+index 777612b7bb..27d5a309b5 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
 @@ -159,3 +159,4 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
@@ -231,10 +231,10 @@ index 81d462d895..bb82575684 100644
  system_ss.add(files('mmsens.c'))
 +system_ss.add(files('i2csens.c'))
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index 1a7fa02e51..cdd33bbbb9 100644
+index b856b1f616..2fba878aac 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -368,3 +368,7 @@ mm_sens_unknown_frequency(uint8_t freq) "Unknown frequency %u"
+@@ -402,3 +402,7 @@ mm_sens_unknown_frequency(uint8_t freq) "Unknown frequency %u"
  mm_sens_ctrl_post_write(uint64_t value) "Wrote 0x%"PRIx64" to CTRL"
  mm_sens_status_post_write(uint64_t value) "Wrote 0x%"PRIx64" to STATUS"
  mm_sens_initval(uint64_t value, uint8_t valid) "Wrote 0x%"PRIx64" to INITVAL, warning=%u"

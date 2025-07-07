@@ -1,7 +1,7 @@
-From dbf483f088d70f39c54c96ba81cd0207213d1ff1 Mon Sep 17 00:00:00 2001
+From e9dd5612327e8e98278957844663aad4e4ac99a4 Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 Date: Thu, 19 Sep 2024 23:19:39 +0200
-Subject: [PATCH 5/5] Custom SPI temperature sensor
+Subject: [PATCH 3/3] Custom SPI temperature sensor
 
 Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 ---
@@ -13,7 +13,7 @@ Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
  create mode 100644 hw/misc/spisens.c
 
 diff --git a/hw/arm/cubieboard.c b/hw/arm/cubieboard.c
-index bda423d117..3750a26b05 100644
+index a3840ab983..0ebb78e196 100644
 --- a/hw/arm/cubieboard.c
 +++ b/hw/arm/cubieboard.c
 @@ -102,6 +102,33 @@ static void cubieboard_init(MachineState *machine)
@@ -51,7 +51,7 @@ index bda423d117..3750a26b05 100644
      cubieboard_binfo.ram_size = machine->ram_size;
      arm_load_kernel(&a10->cpu, machine, &cubieboard_binfo);
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index bb82575684..1a80f56748 100644
+index 27d5a309b5..39f1f3f3e2 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
 @@ -160,3 +160,4 @@ system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
@@ -286,10 +286,10 @@ index 0000000000..6326c5a94b
 +
 +type_init(spi_sens_register_devices)
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index cdd33bbbb9..6e0d6b0560 100644
+index 2fba878aac..a64f85b399 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -372,3 +372,11 @@ mm_sens_initval(uint64_t value, uint8_t valid) "Wrote 0x%"PRIx64" to INITVAL, wa
+@@ -406,3 +406,11 @@ mm_sens_initval(uint64_t value, uint8_t valid) "Wrote 0x%"PRIx64" to INITVAL, wa
  # i2csens.c
  i2csens_read(int reg_id, int val) "Reading from %d: %d"
  i2csens_write(int reg_id, int val) "Writing to %d: %d"

@@ -1,25 +1,25 @@
-From 9f9f4bd9372004528d8f758a271444042814d0f4 Mon Sep 17 00:00:00 2001
+From f077f331e15a7595393ee0133c08351d7d1852a4 Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 Date: Sat, 11 May 2024 21:16:15 +0200
-Subject: [PATCH 1/5] MMSensor: Add memory-mapped sensor component
+Subject: [PATCH 1/3] MMSensor: Add memory-mapped sensor component
 
 Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 ---
  hw/arm/allwinner-a10.c         |   8 +
  hw/misc/meson.build            |   2 +
  hw/misc/mmsens.c               | 324 +++++++++++++++++++++++++++++++++
- hw/misc/trace-events           |   6 +
+ hw/misc/trace-events           |   7 +
  include/hw/arm/allwinner-a10.h |   2 +
  include/hw/misc/mmsens.h       |  77 ++++++++
- 6 files changed, 419 insertions(+)
+ 6 files changed, 420 insertions(+)
  create mode 100644 hw/misc/mmsens.c
  create mode 100644 include/hw/misc/mmsens.h
 
 diff --git a/hw/arm/allwinner-a10.c b/hw/arm/allwinner-a10.c
-index 57d5d80159..9818a6e92e 100644
+index f1b399759a..ff0331e539 100644
 --- a/hw/arm/allwinner-a10.c
 +++ b/hw/arm/allwinner-a10.c
-@@ -41,6 +41,7 @@
+@@ -43,6 +43,7 @@
  #define AW_A10_SATA_BASE        0x01c18000
  #define AW_A10_WDT_BASE         0x01c20c90
  #define AW_A10_RTC_BASE         0x01c20d00
@@ -27,7 +27,7 @@ index 57d5d80159..9818a6e92e 100644
  #define AW_A10_I2C0_BASE        0x01c2ac00
  
  void allwinner_a10_bootrom_setup(AwA10State *s, BlockBackend *blk)
-@@ -91,6 +92,8 @@ static void aw_a10_init(Object *obj)
+@@ -94,6 +95,8 @@ static void aw_a10_init(Object *obj)
      object_initialize_child(obj, "rtc", &s->rtc, TYPE_AW_RTC_SUN4I);
  
      object_initialize_child(obj, "wdt", &s->wdt, TYPE_AW_WDT_SUN4I);
@@ -36,7 +36,7 @@ index 57d5d80159..9818a6e92e 100644
  }
  
  static void aw_a10_realize(DeviceState *dev, Error **errp)
-@@ -198,6 +201,11 @@ static void aw_a10_realize(DeviceState *dev, Error **errp)
+@@ -206,6 +209,11 @@ static void aw_a10_realize(DeviceState *dev, Error **errp)
      /* WDT */
      sysbus_realize(SYS_BUS_DEVICE(&s->wdt), &error_fatal);
      sysbus_mmio_map_overlap(SYS_BUS_DEVICE(&s->wdt), 0, AW_A10_WDT_BASE, 1);
@@ -49,7 +49,7 @@ index 57d5d80159..9818a6e92e 100644
  
  static void aw_a10_class_init(ObjectClass *oc, void *data)
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index 2ca8717be2..81d462d895 100644
+index 6d47de482c..777612b7bb 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
 @@ -157,3 +157,5 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
@@ -389,13 +389,14 @@ index 0000000000..b185a57cde
 +
 +type_init(mm_sens_register_types)
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index 1be0717c0c..1a7fa02e51 100644
+index 4383808d7a..b856b1f616 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -362,3 +362,9 @@ aspeed_sli_read(uint64_t offset, unsigned int size, uint32_t data) "To 0x%" PRIx
- aspeed_sliio_write(uint64_t offset, unsigned int size, uint32_t data) "To 0x%" PRIx64 " of size %u: 0x%" PRIx32
- aspeed_sliio_read(uint64_t offset, unsigned int size, uint32_t data) "To 0x%" PRIx64 " of size %u: 0x%" PRIx32
- 
+@@ -395,3 +395,10 @@ ivshmem_flat_interrupt_peer(uint16_t peer_id, uint16_t vector_id) "Interrupting
+ i2c_echo_event(const char *id, const char *event) "%s: %s"
+ i2c_echo_recv(const char *id, uint8_t data) "%s: recv 0x%02" PRIx8
+ i2c_echo_send(const char *id, uint8_t data) "%s: send 0x%02" PRIx8
++
 +# mmsens.c
 +mm_sens_update_irq(uint8_t pending) "Interrupt pending %u"
 +mm_sens_unknown_frequency(uint8_t freq) "Unknown frequency %u"
@@ -403,19 +404,19 @@ index 1be0717c0c..1a7fa02e51 100644
 +mm_sens_status_post_write(uint64_t value) "Wrote 0x%"PRIx64" to STATUS"
 +mm_sens_initval(uint64_t value, uint8_t valid) "Wrote 0x%"PRIx64" to INITVAL, warning=%u"
 diff --git a/include/hw/arm/allwinner-a10.h b/include/hw/arm/allwinner-a10.h
-index 67a9a17b86..a0cd001362 100644
+index 445ba1be21..674ab00998 100644
 --- a/include/hw/arm/allwinner-a10.h
 +++ b/include/hw/arm/allwinner-a10.h
-@@ -13,6 +13,7 @@
- #include "hw/misc/allwinner-a10-dramc.h"
+@@ -14,6 +14,7 @@
  #include "hw/i2c/allwinner-i2c.h"
+ #include "hw/ssi/allwinner-a10-spi.h"
  #include "hw/watchdog/allwinner-wdt.h"
 +#include "hw/misc/mmsens.h"
- #include "sysemu/block-backend.h"
+ #include "system/block-backend.h"
  
  #include "target/arm/cpu.h"
-@@ -42,6 +43,7 @@ struct AwA10State {
-     AWI2CState i2c0;
+@@ -44,6 +45,7 @@ struct AwA10State {
+     AWA10SPIState spi0;
      AwRtcState rtc;
      AwWdtState wdt;
 +    MMSensorState mmsens;
