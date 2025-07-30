@@ -1,22 +1,22 @@
-From e9dd5612327e8e98278957844663aad4e4ac99a4 Mon Sep 17 00:00:00 2001
+From 7a87963c128f9496c183ed5a4f68d9cd309dedb5 Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 Date: Thu, 19 Sep 2024 23:19:39 +0200
-Subject: [PATCH 3/3] Custom SPI temperature sensor
+Subject: [PATCH 2/2] Custom SPI temperature sensor
 
 Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 ---
- hw/arm/cubieboard.c  |  27 ++++++
+ hw/arm/cubieboard.c  |  29 ++++++
  hw/misc/meson.build  |   1 +
- hw/misc/spisens.c    | 220 +++++++++++++++++++++++++++++++++++++++++++
- hw/misc/trace-events |   8 ++
- 4 files changed, 256 insertions(+)
+ hw/misc/spisens.c    | 240 +++++++++++++++++++++++++++++++++++++++++++
+ hw/misc/trace-events |   7 ++
+ 4 files changed, 277 insertions(+)
  create mode 100644 hw/misc/spisens.c
 
 diff --git a/hw/arm/cubieboard.c b/hw/arm/cubieboard.c
-index a3840ab983..0ebb78e196 100644
+index 0fb8009e55..7b322cc6f8 100644
 --- a/hw/arm/cubieboard.c
 +++ b/hw/arm/cubieboard.c
-@@ -102,6 +102,33 @@ static void cubieboard_init(MachineState *machine)
+@@ -108,6 +108,35 @@ static void cubieboard_init(MachineState *machine)
          allwinner_a10_bootrom_setup(a10, blk);
      }
      /* TODO create and connect IDE devices for ide_drive_get() */
@@ -37,9 +37,11 @@ index a3840ab983..0ebb78e196 100644
 +            if (spi_bus) {
 +                DeviceState *cust_dev;
 +                qemu_irq cs_line;
++                g_autofree char *spiid = g_strdup("spisens");
 +
 +                cust_dev = qdev_new("mistra.spisens");
 +                qdev_prop_set_uint8(cust_dev, "cs", 0);
++                qdev_set_id(cust_dev, spiid, &error_fatal);
 +                qdev_realize_and_unref(cust_dev, BUS(spi_bus), &error_fatal);
 +
 +                cs_line = qdev_get_gpio_in_named(cust_dev, SSI_GPIO_CS, 0);
@@ -61,10 +63,10 @@ index 27d5a309b5..39f1f3f3e2 100644
 +system_ss.add(files('spisens.c'))
 diff --git a/hw/misc/spisens.c b/hw/misc/spisens.c
 new file mode 100644
-index 0000000000..6326c5a94b
+index 0000000000..30d02de895
 --- /dev/null
 +++ b/hw/misc/spisens.c
-@@ -0,0 +1,220 @@
+@@ -0,0 +1,240 @@
 +/*
 + * SPI temperature sensor component
 + *
@@ -81,6 +83,8 @@ index 0000000000..6326c5a94b
 +#include "qemu/log.h"
 +#include "qemu/module.h"
 +#include "qom/object.h"
++#include "qapi/visitor.h"
++#include "qapi/error.h"
 +#include "trace.h"
 +
 +#define TYPE_SPI_SENS "mistra.spisens"
@@ -103,6 +107,7 @@ index 0000000000..6326c5a94b
 +    uint8_t regs[NR_REGS]; // peripheral registers
 +    uint8_t cycle; // cycle counter
 +    uint8_t ptr; // current register index
++    uint8_t temperature;    // temperature as 7.1 fixed point
 +    bool write_nread; // indicator if write or read is in progress
 +} SPISensor;
 +
@@ -118,6 +123,7 @@ index 0000000000..6326c5a94b
 +
 +    s->ptr = 0;
 +    s->cycle = 0;
++    s->temperature = 0;
 +    s->write_nread = false;
 +    memset(s->regs, 0, NR_REGS);
 +    s->regs[REG_ID_OFFSET] = SPI_SENS_ID_VAL;
@@ -126,12 +132,33 @@ index 0000000000..6326c5a94b
 +    srand(time(NULL));
 +}
 +
-+/* Generate random temperature value
-+ * Value is in range 15.0 to 25.0 with 0.5 step.
-+ */
-+static uint8_t spi_sens_get_temperature(void)
++static void spi_sens_get_temperature(Object *obj, Visitor *v, const char *name,
++                                   void *opaque, Error **errp)
 +{
-+    return (30 + (rand() % 21));
++    SPISensor *s = SPI_SENS(obj);
++    uint16_t value = (s->temperature * 10) >> 1;
++
++    visit_type_uint16(v, name, &value, errp);
++}
++
++/*
++ * s->temperature is 7.1 fixed point and value that is received is in 0.1 degree.
++ */
++static void spi_sens_set_temperature(Object *obj, Visitor *v, const char *name,
++                                   void *opaque, Error **errp)
++{
++    SPISensor *s = SPI_SENS(obj);
++    uint16_t temp;
++
++    if (!visit_type_uint16(v, name, &temp, errp)) {
++        return;
++    }
++    if (temp > 1275) {
++        error_setg(errp, "value %d.%01d C is out of range", temp / 10, temp % 10);
++        return;
++    }
++
++    s->temperature = (uint8_t) ((temp << 1) / 10);
 +}
 +
 +/* Return zero on command byte, then return the requested register */
@@ -144,7 +171,7 @@ index 0000000000..6326c5a94b
 +            trace_spisens_read_command(s->write_nread, s->ptr);
 +            /* Generate new temperature sample */
 +            if (s->regs[REG_CTRL_OFFSET] & REG_CTRL_EN_MASK) {
-+                s->regs[REG_TEMPERATURE_OFFSET] = spi_sens_get_temperature();
++                s->regs[REG_TEMPERATURE_OFFSET] = s->temperature;
 +            } else {
 +                s->regs[REG_TEMPERATURE_OFFSET] = 0xff;
 +            }
@@ -240,21 +267,16 @@ index 0000000000..6326c5a94b
 +                                VMSTATE_UINT8_ARRAY(regs, SPISensor, NR_REGS),
 +                                VMSTATE_UINT8(cycle, SPISensor),
 +                                VMSTATE_UINT8(ptr, SPISensor),
++                                VMSTATE_UINT8(temperature, SPISensor),
 +                                VMSTATE_BOOL(write_nread, SPISensor),
 +                                VMSTATE_END_OF_LIST() }
 +};
 +
 +static void spi_sens_init(SSIPeripheral *d, Error **errp)
 +{
-+    SPISensor *s = SPI_SENS(d);
-+
-+    s->cycle = 0;
-+    s->ptr = 0;
-+    memset(s->regs, 0, NR_REGS);
-+    s->regs[REG_ID_OFFSET] = SPI_SENS_ID_VAL;
-+
-+    trace_spisens_init();
-+
++    object_property_add(OBJECT(d), "temperature", "uint16",
++                        spi_sens_get_temperature,
++                        spi_sens_set_temperature, NULL, NULL);
 +    return;
 +}
 +
@@ -286,16 +308,15 @@ index 0000000000..6326c5a94b
 +
 +type_init(spi_sens_register_devices)
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index 2fba878aac..a64f85b399 100644
+index 2fba878aac..bf0ba7edb0 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -406,3 +406,11 @@ mm_sens_initval(uint64_t value, uint8_t valid) "Wrote 0x%"PRIx64" to INITVAL, wa
+@@ -406,3 +406,10 @@ mm_sens_initval(uint64_t value, uint8_t valid) "Wrote 0x%"PRIx64" to INITVAL, wa
  # i2csens.c
  i2csens_read(int reg_id, int val) "Reading from %d: %d"
  i2csens_write(int reg_id, int val) "Writing to %d: %d"
 +
 +# spisens.c
-+spisens_init(void) "Called init function"
 +spisens_select(void *s, const char *what) "[%p] %sselect"
 +spisens_read_command(bool write_nread, uint8_t ptr) "Read at command byte with %d, ptr %d"
 +spisens_read_valid(uint8_t ptr, uint32_t value) "Read success at %d, value %d"
