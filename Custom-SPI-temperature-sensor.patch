@@ -1,7 +1,7 @@
-From 7a87963c128f9496c183ed5a4f68d9cd309dedb5 Mon Sep 17 00:00:00 2001
+From ee9d8687bfad5600a4b976eb6c238cd0ef89751d Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 Date: Thu, 19 Sep 2024 23:19:39 +0200
-Subject: [PATCH 2/2] Custom SPI temperature sensor
+Subject: [PATCH] Custom SPI temperature sensor
 
 Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 ---
@@ -13,10 +13,10 @@ Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
  create mode 100644 hw/misc/spisens.c
 
 diff --git a/hw/arm/cubieboard.c b/hw/arm/cubieboard.c
-index 0fb8009e55..7b322cc6f8 100644
+index 3415494acb..e5d2a3a7ad 100644
 --- a/hw/arm/cubieboard.c
 +++ b/hw/arm/cubieboard.c
-@@ -108,6 +108,35 @@ static void cubieboard_init(MachineState *machine)
+@@ -109,6 +109,35 @@ static void cubieboard_init(MachineState *machine)
          allwinner_a10_bootrom_setup(a10, blk);
      }
      /* TODO create and connect IDE devices for ide_drive_get() */
@@ -53,17 +53,17 @@ index 0fb8009e55..7b322cc6f8 100644
      cubieboard_binfo.ram_size = machine->ram_size;
      arm_load_kernel(&a10->cpu, machine, &cubieboard_binfo);
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index 27d5a309b5..39f1f3f3e2 100644
+index 2c50274fd5..64037d4b92 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -160,3 +160,4 @@ system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
+@@ -169,3 +169,4 @@ system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
  
  system_ss.add(files('mmsens.c'))
  system_ss.add(files('i2csens.c'))
 +system_ss.add(files('spisens.c'))
 diff --git a/hw/misc/spisens.c b/hw/misc/spisens.c
 new file mode 100644
-index 0000000000..30d02de895
+index 0000000000..326887b27b
 --- /dev/null
 +++ b/hw/misc/spisens.c
 @@ -0,0 +1,240 @@
@@ -76,8 +76,8 @@ index 0000000000..30d02de895
 + */
 +
 +#include "qemu/osdep.h"
-+#include "hw/irq.h"
-+#include "hw/qdev-properties.h"
++#include "hw/core/irq.h"
++#include "hw/core/qdev-properties.h"
 +#include "hw/ssi/ssi.h"
 +#include "migration/vmstate.h"
 +#include "qemu/log.h"
@@ -280,7 +280,7 @@ index 0000000000..30d02de895
 +    return;
 +}
 +
-+static void spi_sens_class_init(ObjectClass *klass, void *data)
++static void spi_sens_class_init(ObjectClass *klass, const void *data)
 +{
 +    SSIPeripheralClass *k = SSI_PERIPHERAL_CLASS(klass);
 +    DeviceClass *dc = DEVICE_CLASS(klass);
@@ -308,10 +308,10 @@ index 0000000000..30d02de895
 +
 +type_init(spi_sens_register_devices)
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index 2fba878aac..bf0ba7edb0 100644
+index c95f160916..9ad45d0afb 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -406,3 +406,10 @@ mm_sens_initval(uint64_t value, uint8_t valid) "Wrote 0x%"PRIx64" to INITVAL, wa
+@@ -428,3 +428,10 @@ mm_sens_initval(uint64_t value, uint8_t valid) "Wrote 0x%"PRIx64" to INITVAL, wa
  # i2csens.c
  i2csens_read(int reg_id, int val) "Reading from %d: %d"
  i2csens_write(int reg_id, int val) "Writing to %d: %d"
@@ -323,5 +323,5 @@ index 2fba878aac..bf0ba7edb0 100644
 +spisens_write_command(bool write_nread, uint8_t ptr) "Write at command byte with %d, ptr %d"
 +spisens_write_valid(uint8_t ptr, uint32_t value) "Write success at %d, value %d"
 -- 
-2.39.5
+2.54.0
 
