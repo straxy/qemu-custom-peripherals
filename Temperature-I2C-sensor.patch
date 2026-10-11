@@ -17,13 +17,13 @@ index a643ae4e27..3415494acb 100644
 --- a/hw/arm/cubieboard.c
 +++ b/hw/arm/cubieboard.c
 @@ -24,6 +24,7 @@
+ #include "hw/arm/allwinner-a10.h"
  #include "hw/arm/boot.h"
- #include "hw/arm/machines-qom.h"
  #include "hw/i2c/i2c.h"
 +#include "monitor/qdev.h"
  
- static struct arm_boot_info cubieboard_binfo = {
-     .loader_start = AW_A10_SDRAM_BASE,
+ #define TYPE_CUBIEBOARD_MACHINE MACHINE_TYPE_NAME("cubieboard")
+ OBJECT_DECLARE_SIMPLE_TYPE(CubieboardMachineState, CUBIEBOARD_MACHINE)
 @@ -39,6 +40,8 @@ static void cubieboard_init(MachineState *machine)
      BusState *bus;
      DeviceState *carddev;

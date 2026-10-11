@@ -20,7 +20,7 @@ index 66f30757dd..08e76b6578 100644
 --- a/hw/arm/allwinner-a10.c
 +++ b/hw/arm/allwinner-a10.c
 @@ -43,6 +43,7 @@
- #define AW_A10_SATA_BASE        0x01c18000
+ #define AW_A10_GPIO_BASE        0x01c20800
  #define AW_A10_WDT_BASE         0x01c20c90
  #define AW_A10_RTC_BASE         0x01c20d00
 +#define AW_A10_MM_SENS_BASE     0x01c2a800
@@ -424,9 +424,9 @@ index c9a868b3ef..a6ef27ac02 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
 @@ -442,3 +442,10 @@ iommu_testdev_dma_read(uint64_t gva, uint32_t len) "gva=0x%" PRIx64 " len=%u"
- iommu_testdev_dma_verify(uint32_t expected, uint32_t actual) "expected=0x%x actual=0x%x"
- iommu_testdev_dma_result(uint32_t result) "DMA completed result=0x%x"
- iommu_testdev_dma_armed(bool armed) "armed=%d"
+ vmlaunch_reset_enter(void) ""
+ vm_launchupdate_finalize(void) ""
+ restore_host_x86_igvm(void) ""
 +
 +# mmsens.c
 +mm_sens_update_irq(uint8_t pending) "Interrupt pending %u"
@@ -439,15 +439,15 @@ index 445ba1be21..674ab00998 100644
 --- a/include/hw/arm/allwinner-a10.h
 +++ b/include/hw/arm/allwinner-a10.h
 @@ -14,6 +14,7 @@
- #include "hw/i2c/allwinner-i2c.h"
  #include "hw/ssi/allwinner-a10-spi.h"
+ #include "hw/gpio/allwinner-gpio.h"
  #include "hw/watchdog/allwinner-wdt.h"
 +#include "hw/misc/mmsens.h"
  #include "system/block-backend.h"
  
  #include "target/arm/cpu.h"
 @@ -44,6 +45,7 @@ struct AwA10State {
-     AWA10SPIState spi0;
+     AWGPIOState gpio;
      AwRtcState rtc;
      AwWdtState wdt;
 +    MMSensorState mmsens;

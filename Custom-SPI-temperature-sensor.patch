@@ -50,8 +50,8 @@ index 3415494acb..e5d2a3a7ad 100644
 +        }
 +    }
  
-     cubieboard_binfo.ram_size = machine->ram_size;
-     arm_load_kernel(&a10->cpu, machine, &cubieboard_binfo);
+     cbs->bootinfo.loader_start = AW_A10_SDRAM_BASE;
+     cbs->bootinfo.board_id = 0x1008;
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
 index beeef3b920..a6420957ad 100644
 --- a/hw/misc/meson.build
