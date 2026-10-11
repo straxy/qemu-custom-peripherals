@@ -1,15 +1,15 @@
-From ee9d8687bfad5600a4b976eb6c238cd0ef89751d Mon Sep 17 00:00:00 2001
+From de6cdfef6a66475d2b2f15e26362d4e1675d68cc Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 Date: Thu, 19 Sep 2024 23:19:39 +0200
-Subject: [PATCH] Custom SPI temperature sensor
+Subject: [PATCH 3/3] Custom SPI temperature sensor
 
 Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 ---
  hw/arm/cubieboard.c  |  29 ++++++
  hw/misc/meson.build  |   1 +
- hw/misc/spisens.c    | 240 +++++++++++++++++++++++++++++++++++++++++++
+ hw/misc/spisens.c    | 241 +++++++++++++++++++++++++++++++++++++++++++
  hw/misc/trace-events |   7 ++
- 4 files changed, 277 insertions(+)
+ 4 files changed, 278 insertions(+)
  create mode 100644 hw/misc/spisens.c
 
 diff --git a/hw/arm/cubieboard.c b/hw/arm/cubieboard.c
@@ -53,20 +53,20 @@ index 3415494acb..e5d2a3a7ad 100644
      cubieboard_binfo.ram_size = machine->ram_size;
      arm_load_kernel(&a10->cpu, machine, &cubieboard_binfo);
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index 2c50274fd5..64037d4b92 100644
+index beeef3b920..a6420957ad 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -169,3 +169,4 @@ system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
+@@ -174,3 +174,4 @@ system_ss.add(when: 'CONFIG_AXIADO_CLK', if_true: files('axiado_clk.c'))
  
  system_ss.add(files('mmsens.c'))
  system_ss.add(files('i2csens.c'))
 +system_ss.add(files('spisens.c'))
 diff --git a/hw/misc/spisens.c b/hw/misc/spisens.c
 new file mode 100644
-index 0000000000..326887b27b
+index 0000000000..d920fc5867
 --- /dev/null
 +++ b/hw/misc/spisens.c
-@@ -0,0 +1,240 @@
+@@ -0,0 +1,241 @@
 +/*
 + * SPI temperature sensor component
 + *
@@ -188,6 +188,7 @@ index 0000000000..326887b27b
 +                qemu_log_mask(LOG_GUEST_ERROR, "[%s]%s: Transfer too long\n",
 +                              TYPE_SPI_SENS, __func__);
 +            }
++            break;
 +        default:
 +            qemu_log_mask(LOG_GUEST_ERROR,
 +                          "[%s]%s: Trying to read non-existing register\n",
@@ -308,10 +309,10 @@ index 0000000000..326887b27b
 +
 +type_init(spi_sens_register_devices)
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index c95f160916..9ad45d0afb 100644
+index a4c757ee17..14e9b18696 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -428,3 +428,10 @@ mm_sens_initval(uint64_t value, uint8_t valid) "Wrote 0x%"PRIx64" to INITVAL, wa
+@@ -453,3 +453,10 @@ mm_sens_initval(uint64_t value, uint8_t valid) "Wrote 0x%"PRIx64" to INITVAL, wa
  # i2csens.c
  i2csens_read(int reg_id, int val) "Reading from %d: %d"
  i2csens_write(int reg_id, int val) "Writing to %d: %d"
@@ -323,5 +324,5 @@ index c95f160916..9ad45d0afb 100644
 +spisens_write_command(bool write_nread, uint8_t ptr) "Write at command byte with %d, ptr %d"
 +spisens_write_valid(uint8_t ptr, uint32_t value) "Write success at %d, value %d"
 -- 
-2.54.0
+2.55.0
 

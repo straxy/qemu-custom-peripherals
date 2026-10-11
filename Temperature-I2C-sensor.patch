@@ -1,7 +1,7 @@
-From 09b5cb194b42034b7bcabef09c14346668cbe169 Mon Sep 17 00:00:00 2001
+From 67a47d30bb13fb77ee59ee7d15b56382fc76a565 Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 Date: Fri, 24 May 2024 23:49:00 +0200
-Subject: [PATCH] Temperature I2C sensor
+Subject: [PATCH 2/3] Temperature I2C sensor
 
 Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 ---
@@ -264,19 +264,19 @@ index 0000000000..3b2c8d0c0f
 +
 +type_init(i2c_sens_register_devices);
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index a995100a36..2c50274fd5 100644
+index 17e713eac3..beeef3b920 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -168,3 +168,4 @@ system_ss.add(when: 'CONFIG_SBSA_REF', if_true: files('sbsa_ec.c'))
- system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
+@@ -173,3 +173,4 @@ system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
+ system_ss.add(when: 'CONFIG_AXIADO_CLK', if_true: files('axiado_clk.c'))
  
  system_ss.add(files('mmsens.c'))
 +system_ss.add(files('i2csens.c'))
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index 46b7287412..c95f160916 100644
+index a6ef27ac02..a4c757ee17 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -424,3 +424,7 @@ mm_sens_unknown_frequency(uint8_t freq) "Unknown frequency %u"
+@@ -449,3 +449,7 @@ mm_sens_unknown_frequency(uint8_t freq) "Unknown frequency %u"
  mm_sens_ctrl_post_write(uint64_t value) "Wrote 0x%"PRIx64" to CTRL"
  mm_sens_status_post_write(uint64_t value) "Wrote 0x%"PRIx64" to STATUS"
  mm_sens_initval(uint64_t value, uint8_t valid) "Wrote 0x%"PRIx64" to INITVAL, warning=%u"
@@ -285,5 +285,5 @@ index 46b7287412..c95f160916 100644
 +i2csens_read(int reg_id, int val) "Reading from %d: %d"
 +i2csens_write(int reg_id, int val) "Writing to %d: %d"
 -- 
-2.54.0
+2.55.0
 
