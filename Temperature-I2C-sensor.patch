@@ -1,4 +1,4 @@
-From 67a47d30bb13fb77ee59ee7d15b56382fc76a565 Mon Sep 17 00:00:00 2001
+From ee531d8b102ae4c88c0076383633dab7091c3c6a Mon Sep 17 00:00:00 2001
 From: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
 Date: Fri, 24 May 2024 23:49:00 +0200
 Subject: [PATCH 2/3] Temperature I2C sensor
@@ -13,10 +13,10 @@ Signed-off-by: Strahinja Jankovic <strahinja.p.jankovic@gmail.com>
  create mode 100644 hw/misc/i2csens.c
 
 diff --git a/hw/arm/cubieboard.c b/hw/arm/cubieboard.c
-index a643ae4e27..3415494acb 100644
+index e4fef9cd76..bb25fed1a6 100644
 --- a/hw/arm/cubieboard.c
 +++ b/hw/arm/cubieboard.c
-@@ -24,6 +24,7 @@
+@@ -23,6 +23,7 @@
  #include "hw/arm/allwinner-a10.h"
  #include "hw/arm/boot.h"
  #include "hw/i2c/i2c.h"
@@ -24,7 +24,7 @@ index a643ae4e27..3415494acb 100644
  
  #define TYPE_CUBIEBOARD_MACHINE MACHINE_TYPE_NAME("cubieboard")
  OBJECT_DECLARE_SIMPLE_TYPE(CubieboardMachineState, CUBIEBOARD_MACHINE)
-@@ -39,6 +40,8 @@ static void cubieboard_init(MachineState *machine)
+@@ -43,6 +44,8 @@ static void cubieboard_init(MachineState *machine)
      BusState *bus;
      DeviceState *carddev;
      I2CBus *i2c;
@@ -33,7 +33,7 @@ index a643ae4e27..3415494acb 100644
  
      /* BIOS is not supported by this board */
      if (machine->firmware) {
-@@ -83,6 +86,10 @@ static void cubieboard_init(MachineState *machine)
+@@ -87,6 +90,10 @@ static void cubieboard_init(MachineState *machine)
      i2c = I2C_BUS(qdev_get_child_bus(DEVICE(&a10->i2c0), "i2c"));
      i2c_slave_create_simple(i2c, "axp209_pmu", 0x34);
  
@@ -264,19 +264,19 @@ index 0000000000..3b2c8d0c0f
 +
 +type_init(i2c_sens_register_devices);
 diff --git a/hw/misc/meson.build b/hw/misc/meson.build
-index 17e713eac3..beeef3b920 100644
+index ef277c7888..1938e6fc26 100644
 --- a/hw/misc/meson.build
 +++ b/hw/misc/meson.build
-@@ -173,3 +173,4 @@ system_ss.add(when: 'CONFIG_LASI', if_true: files('lasi.c'))
- system_ss.add(when: 'CONFIG_AXIADO_CLK', if_true: files('axiado_clk.c'))
+@@ -185,3 +185,4 @@ system_ss.add(when: 'CONFIG_QCOM_QDSP6SS_CLK', if_true: files('qcom-qdsp6ss-clk.
  
+ # Mistra custom peripherals
  system_ss.add(files('mmsens.c'))
 +system_ss.add(files('i2csens.c'))
 diff --git a/hw/misc/trace-events b/hw/misc/trace-events
-index a6ef27ac02..a4c757ee17 100644
+index f5d30005c1..1100b538e4 100644
 --- a/hw/misc/trace-events
 +++ b/hw/misc/trace-events
-@@ -449,3 +449,7 @@ mm_sens_unknown_frequency(uint8_t freq) "Unknown frequency %u"
+@@ -481,3 +481,7 @@ mm_sens_unknown_frequency(uint8_t freq) "Unknown frequency %u"
  mm_sens_ctrl_post_write(uint64_t value) "Wrote 0x%"PRIx64" to CTRL"
  mm_sens_status_post_write(uint64_t value) "Wrote 0x%"PRIx64" to STATUS"
  mm_sens_initval(uint64_t value, uint8_t valid) "Wrote 0x%"PRIx64" to INITVAL, warning=%u"
@@ -285,5 +285,5 @@ index a6ef27ac02..a4c757ee17 100644
 +i2csens_read(int reg_id, int val) "Reading from %d: %d"
 +i2csens_write(int reg_id, int val) "Writing to %d: %d"
 -- 
-2.55.0
+2.56.0
 
